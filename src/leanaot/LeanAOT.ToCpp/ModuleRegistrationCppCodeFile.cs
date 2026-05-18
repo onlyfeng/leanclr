@@ -1,4 +1,5 @@
 using dnlib.DotNet;
+using LeanAOT.Core;
 using LeanAOT.GenerationPlan;
 
 namespace LeanAOT.ToCpp
@@ -26,6 +27,10 @@ namespace LeanAOT.ToCpp
         private readonly bool _enableTypesLayoutValidation;
         private readonly List<TypeDef> _validateTypes;
 
+        public ForwardDeclaration ForwardDeclaration => throw new NotImplementedException();
+
+        public CodeWriter MethodWriter => throw new NotImplementedException();
+
         public ModuleRegistrationCppCodeFile(string filePath, AssemblyPlan plan)
         {
             _totalWriter = new CodeWriter(filePath);
@@ -45,6 +50,8 @@ namespace LeanAOT.ToCpp
             AddIncludes();
             AddGlobalVariableDeclaration();
             AddModuleMethodDefDatasDeclaration();
+            GenerateMonoPInvokeCallbackMethods();
+            AddModuleMonoPInvokeCallbackDatasDeclaration();
             if (_enableTypesLayoutValidation)
             {
                 AddTypesLayoutValidation();
@@ -95,6 +102,43 @@ namespace LeanAOT.ToCpp
             _implWriter.AddLine("}");
         }
 
+        private string GetMonoPInvokeCallbackDatasVariableName()
+        {
+            return $"s_mono_pinvoke_cb_datas_{ModuleGenerationUtil.GetStandardizedModuleNameWithoutExt(_mod)}";
+        }
+
+        private void GenerateMonoPInvokeCallbackMethods()
+        {
+            MonoPInvokeCallbackService monoPInvokeCallbackService = GlobalServices.Inst.MonoPInvokeCallbackService;
+            foreach (MethodDefPlan mp in _plan.MonoPInvokeCallbackMethodPlans)
+            {
+                MethodDef method = mp.MethodDef;
+                MonoPInvokeCallbackInfo info = monoPInvokeCallbackService.GetMonoPInvokeCallbackInfo(method);
+                var writer = new MonoPInvokeCallbackWriter(info, _forwardDeclaration, _implWriter);
+                writer.WriteCode();
+            }
+        }
+
+        private void AddModuleMonoPInvokeCallbackDatasDeclaration()
+        {
+            _implWriter.AddLine();
+            if (_plan.MonoPInvokeCallbackMethodPlans.Count == 0)
+            {
+                return;
+            }
+            _implWriter.AddLine($"static {ConstStrings.MonoPInvokeCallbackDataTypeName} {GetMonoPInvokeCallbackDatasVariableName()}[] = {{");
+            _implWriter.IncreaseIndent();
+            MonoPInvokeCallbackService monoPInvokeCallbackService = GlobalServices.Inst.MonoPInvokeCallbackService;
+            foreach (MethodDefPlan mp in _plan.MonoPInvokeCallbackMethodPlans)
+            {
+                MethodDef method = mp.MethodDef;
+                MonoPInvokeCallbackInfo info = monoPInvokeCallbackService.GetMonoPInvokeCallbackInfo(method);
+                _implWriter.AddLine($"{{ 0x{method.MDToken.ToInt32():X8}, reinterpret_cast<leanclr::metadata::RtNativeMethodPointer>(&{info.name}) }},");
+            }
+            _implWriter.DecreaseIndent();
+            _implWriter.AddLine("};");
+        }
+
         private void AddModuleMethodDefDatasDeclaration()
         {
             _implWriter.AddLine();
@@ -131,6 +175,16 @@ namespace LeanAOT.ToCpp
             _implWriter.AddLine($"{ModuleGenerationUtil.GetModuleDeferredInitializeMethodName(_mod)},");
             _implWriter.AddLine($"{GetMethodDefDatasVariableName()},");
             _implWriter.AddLine($"{_plan.MethodPlans.Count},");
+            if (_plan.MonoPInvokeCallbackMethodPlans.Count > 0)
+            {
+                _implWriter.AddLine($"{GetMonoPInvokeCallbackDatasVariableName()},");
+                _implWriter.AddLine($"{_plan.MonoPInvokeCallbackMethodPlans.Count},");
+            }
+            else
+            {
+                _implWriter.AddLine("nullptr,");
+                _implWriter.AddLine("0,");
+            }
             _implWriter.DecreaseIndent();
             _implWriter.AddLine("};");
         }

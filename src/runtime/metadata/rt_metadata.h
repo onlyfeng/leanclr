@@ -511,9 +511,9 @@ using RtInvokeMethodPointer = RtResultVoid (*)(RtManagedMethodPointer, const RtM
 using RtNativeMethodPointer = void (*)();
 
 #define CAST_AS_NOEXCEP_MANAGED_METHOD_POINTER(p) ((void (*)() noexcept)(p))
-#define CAST_AS_NOEXCEP_INVOKE_METHOD_POINTER(p)                                                                         \
-    ((::leanclr::RtResultVoid (*)(::leanclr::metadata::RtManagedMethodPointer, const ::leanclr::metadata::RtMethodInfo*, \
-                                  const ::leanclr::interp::RtStackObject*, ::leanclr::interp::RtStackObject*) noexcept)(p))
+#define CAST_AS_NOEXCEP_INVOKE_METHOD_POINTER(p)                                                                        \
+    ((::leanclr::RtResultVoid(*)(::leanclr::metadata::RtManagedMethodPointer, const ::leanclr::metadata::RtMethodInfo*, \
+                                 const ::leanclr::interp::RtStackObject*, ::leanclr::interp::RtStackObject*) noexcept)(p))
 
 // Interface offset structure
 struct RtInterfaceOffset
@@ -663,6 +663,13 @@ constexpr uint16_t RT_MAX_INTERFACE_COUNT = 0xFFFF;
 constexpr uint32_t RT_MAX_NESTED_CLASS_COUNT = 0xFFFF;
 constexpr uint8_t RT_MAX_ARRAY_RANK = 0x32;
 
+struct TypedConstRawData
+{
+    RtElementType type;
+    const uint8_t* data;
+    size_t size;
+};
+
 // Forward declarations for assembly
 struct RtAssembly;
 class RtModuleDef;
@@ -719,28 +726,6 @@ struct RtCustomAttributeRawData
 {
     const RtMethodInfo* ctor;
     uint32_t dataBlobIndex;
-};
-
-enum class RtMarshalNativeType
-{
-    Boolean = 0x2,
-    I1 = 0x3,
-    U1 = 0x4,
-    I2 = 0x5,
-    U2 = 0x6,
-    I4 = 0x7,
-    U4 = 0x8,
-    I8 = 0x9,
-    U8 = 0xA,
-    R4 = 0xB,
-    R8 = 0xC,
-    LPSTR = 0x14,
-    LPWSTR = 0x15,
-    Int = 0X1f,
-    Uint = 0X20,
-    Func = 0x26,
-    Array = 0x2a,
-    Max = 0x50, // NOT DEFINED IN ecma-335, the implementation of coreclr is 0x50
 };
 
 class RtModuleDef;
@@ -915,11 +900,10 @@ struct RtAotMethodDefData
     RtInvokeMethodPointer invoke_method_ptr;
 };
 
-struct RtAotMethodImplData
+struct RtAotMethodMonoPInvokeCallbackData
 {
-    RtManagedMethodPointer method_ptr;
-    RtManagedMethodPointer virtual_method_ptr;
-    RtInvokeMethodPointer invoke_method_ptr;
+    EncodedTokenId token;
+    RtNativeMethodPointer native_method_ptr;
 };
 
 struct RtAotModuleData
@@ -929,6 +913,8 @@ struct RtAotModuleData
     RtAotModuleInitializer deferred_initializer;
     const RtAotMethodDefData* method_def_entries;
     uint32_t method_def_entry_count;
+    const RtAotMethodMonoPInvokeCallbackData* mono_pinvoke_callback_entries;
+    uint32_t mono_pinvoke_callback_entry_count;
 };
 
 struct RtAotModulesData

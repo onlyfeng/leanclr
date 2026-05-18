@@ -19,68 +19,6 @@ namespace leanclr
 namespace vm
 {
 
-// Check if field is instance field (not static)
-bool Field::is_instance(const metadata::RtFieldInfo* field)
-{
-    return (field->flags & static_cast<uint32_t>(metadata::RtFieldAttribute::Static)) == 0;
-}
-
-// Check if field is static (includes literal and RVA)
-bool Field::is_static_included_literal_and_rva(const metadata::RtFieldInfo* field)
-{
-    return (field->flags & static_cast<uint32_t>(metadata::RtFieldAttribute::Static)) != 0;
-}
-
-// Check if field is static (excludes literal and RVA)
-bool Field::is_static_excluded_literal_and_rva(const metadata::RtFieldInfo* field)
-{
-    uint32_t flags = field->flags;
-    return (flags & static_cast<uint32_t>(metadata::RtFieldAttribute::Static)) != 0 &&
-           (flags & (static_cast<uint32_t>(metadata::RtFieldAttribute::Literal) | static_cast<uint32_t>(metadata::RtFieldAttribute::HasFieldRva))) == 0;
-}
-
-// Check if field is static literal
-bool Field::is_static_literal(const metadata::RtFieldInfo* field)
-{
-    uint32_t flags = field->flags;
-    return (flags & static_cast<uint32_t>(metadata::RtFieldAttribute::Static)) != 0 &&
-           (flags & static_cast<uint32_t>(metadata::RtFieldAttribute::Literal)) != 0;
-}
-
-// Check if field is static with RVA
-bool Field::is_static_rva(const metadata::RtFieldInfo* field)
-{
-    uint32_t flags = field->flags;
-    return (flags & static_cast<uint32_t>(metadata::RtFieldAttribute::Static)) != 0 &&
-           (flags & static_cast<uint32_t>(metadata::RtFieldAttribute::HasFieldRva)) != 0;
-}
-
-// Check if field is thread static
-bool Field::is_thread_static(const metadata::RtFieldInfo* field)
-{
-    // Thread static fields not yet implemented
-    return false;
-}
-
-// Check if field is public
-bool Field::is_public(const metadata::RtFieldInfo* field)
-{
-    uint32_t visibility = field->flags & static_cast<uint32_t>(metadata::RtFieldAttribute::FieldAccessMask);
-    return visibility == static_cast<uint32_t>(metadata::RtFieldAttribute::Public);
-}
-
-// Check if field is private
-bool Field::is_private(const metadata::RtFieldInfo* field)
-{
-    uint32_t visibility = field->flags & static_cast<uint32_t>(metadata::RtFieldAttribute::FieldAccessMask);
-    return visibility == static_cast<uint32_t>(metadata::RtFieldAttribute::Private);
-}
-
-bool Field::has_field_marshal(const metadata::RtFieldInfo* field)
-{
-    return (field->flags & static_cast<uint32_t>(metadata::RtFieldAttribute::HasFieldMarshal)) != 0;
-}
-
 // Inflate field with generic context
 RtResult<const metadata::RtFieldInfo*> Field::inflate_field(const metadata::RtFieldInfo* field, const metadata::RtGenericContext* generic_context)
 {
@@ -97,44 +35,6 @@ RtResult<const metadata::RtFieldInfo*> Field::inflate_field(const metadata::RtFi
     RET_OK(&inflatedClass->fields[fieldIndex]);
 }
 
-uint32_t Field::get_field_offset_includes_object_header_for_all_type(const metadata::RtFieldInfo* field)
-{
-    if (is_instance(field))
-    {
-        return field->offset + vm::RT_OBJECT_HEADER_SIZE;
-    }
-    else
-    {
-        return field->offset;
-    }
-}
-
-// Get field offset including object header for reference types
-uint32_t Field::get_field_offset_includes_object_header_for_reference_type(const metadata::RtFieldInfo* field)
-{
-    if (is_instance(field) && Class::is_reference_type(static_cast<metadata::RtClass*>(field->parent)))
-    {
-        return field->offset + vm::RT_OBJECT_HEADER_SIZE;
-    }
-    else
-    {
-        return field->offset;
-    }
-}
-
-// Get field offset including object header for all types
-uint32_t Field::get_instance_field_offset_includes_object_header_for_all_type(const metadata::RtFieldInfo* field)
-{
-    assert(is_instance(field));
-    return field->offset + vm::RT_OBJECT_HEADER_SIZE;
-}
-
-// Get field offset excluding object header
-uint32_t Field::get_field_offset_excludes_object_header_for_all_type(const metadata::RtFieldInfo* field)
-{
-    return field->offset;
-}
-
 // Get field RVA data
 RtResult<const uint8_t*> Field::get_field_rva_data(const metadata::RtFieldInfo* field)
 {
@@ -149,7 +49,7 @@ RtResult<const uint8_t*> Field::get_field_rva_data(const metadata::RtFieldInfo* 
 }
 
 // Get field const data (placeholder)
-RtResult<utils::BinaryReader> Field::get_field_const_reader(const metadata::RtFieldInfo* field)
+RtResult<metadata::TypedConstRawData> Field::get_field_const_reader(const metadata::RtFieldInfo* field)
 {
     if (is_static_literal(field))
     {
@@ -160,9 +60,15 @@ RtResult<utils::BinaryReader> Field::get_field_const_reader(const metadata::RtFi
 
 RtResult<const void*> Field::get_field_const_data(const metadata::RtFieldInfo* field)
 {
-    auto retReader = get_field_const_reader(field);
-    DECLARING_AND_UNWRAP_OR_RET_ERR_ON_FAIL2(utils::BinaryReader, reader, retReader);
-    RET_OK(reader.data());
+    auto ret_const_data = get_field_const_reader(field);
+    if (ret_const_data.is_ok())
+    {
+        return ret_const_data.unwrap().data;
+    }
+    else
+    {
+        return ret_const_data.unwrap_err();
+    }
 }
 
 // Get field const object

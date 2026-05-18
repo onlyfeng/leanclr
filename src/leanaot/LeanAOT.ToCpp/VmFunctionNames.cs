@@ -40,7 +40,6 @@ namespace LeanAOT.ToCpp
         public const string NewMdArrayFromArrayKlass = "leanclr::codegen::new_mdarray_from_array_class";
         public const string GetArrayLength = "leanclr::codegen::get_array_length";
         public const string GetArrayElementKlass = "leanclr::codegen::get_array_element_class";
-        public const string IsArrayIndexOutOfRange = "leanclr::codegen::is_array_index_out_of_range";
         public const string IsPointerElementCompatibleWith = "leanclr::codegen::is_pointer_element_compatible_with";
         public const string GetArrayElementAddress = "leanclr::codegen::get_array_element_address";
         public const string GetArrayElementDataAt = "leanclr::codegen::get_array_element_data_at";
@@ -57,6 +56,8 @@ namespace LeanAOT.ToCpp
         public const string VirtualInvokeWithoutRunClassStaticConstructor = "leanclr::codegen::virtual_invoke_without_run_class_static_constructor";
 
         public const string SetRetOrReturnError = "leanclr::codegen::set_ret_or_return_error";
+
+        public const string GetEvalStackValueAsType = "leanclr::codegen::get_eval_stack_value_as_type";
 
         public const string IsAotMethod = "leanclr::codegen::is_aot_method";
 
@@ -75,5 +76,46 @@ namespace LeanAOT.ToCpp
         public const string THROW_RUNTIME_ERROR = "LEANCLR_CODEGEN_THROW_RUNTIME_ERROR";
         public const string CHECK_NULL_REFERENCE = "LEANCLR_CODEGEN_CHECK_NOT_NULL_OR_THROW_NULL_REFERENCE_EXCEPTION";
         public const string THROW_EXCEPTION = "LEANCLR_CODEGEN_THROW_EXCEPTION";
+        public const string DECLARING_ASSIGN_OR_THROW_WITHOUT_IP = "LEANCLR_CODEGEN_DECLARING_ASSIGN_OR_THROW_ON_ERROR_WITHOUT_IP";
+        public const string DECLARING_ASSIGN_OR_ABORT_ON_ERROR = "LEANCLR_CODEGEN_DECLARING_ASSIGN_OR_ABORT_ON_ERROR";
+
+        public const string GOTO_RET_VALUE = "LEANCLR_CODEGEN_GOTO_RETURN";
+        public const string GOTO_RET_ERROR = "LEANCLR_CODEGEN_GOTO_RETURN_ERR";
+        public const string GOTO_RET_VOID = "LEANCLR_CODEGEN_GOTO_RETURN_VOID";
+
+        public const string GOTO_THROW_ON_ERROR = "LEANCLR_CODEGEN_GOTO_THROW_ON_ERROR";
+        public const string GOTO_DECLARING_ASSIGN_OR_THROW = "LEANCLR_CODEGEN_GOTO_DECLARING_ASSIGN_OR_THROW_ON_ERROR";
+        public const string GOTO_ASSIGN_OR_THROW = "LEANCLR_CODEGEN_GOTO_ASSIGN_OR_THROW_ON_ERROR";
+        public const string GOTO_THROW_RUNTIME_ERROR = "LEANCLR_CODEGEN_GOTO_THROW_RUNTIME_ERROR";
+        public const string GOTO_CHECK_NULL_REFERENCE = "LEANCLR_CODEGEN_GOTO_CHECK_NOT_NULL_OR_THROW_NULL_REFERENCE_EXCEPTION";
+
+        public const string ABORT_WHEN_RAISE_EXCEPTION_IN_MONO_PINVOKE_CALLBACK = "LEANCLR_CODEGEN_ABORT_WHEN_RAISE_EXCEPTION_IN_MONO_PINVOKE_CALLBACK";
+
+
+        public const string StringGetCharsPtr = "leanclr::vm::String::get_chars_ptr";
+        public const string StringGetLength = "leanclr::vm::String::get_length";
+
+        // marshal
+
+        public const string MarshalUtf8CStrToManagedChar = "leanclr::codegen::marshal_utf8_char_to_managed_char";
+        public const string MarshalManagedCharToUtf8Char = "leanclr::codegen::marshal_managed_char_to_utf8_char";
+        public const string MarshalAnsiCStrToManagedChar = "leanclr::codegen::marshal_ansi_cstr_to_managed_char";
+        public const string MarshalManagedCharToAnsiChar = "leanclr::codegen::marshal_managed_char_to_ansi_char";
+        public const string MarshalUtf8StringToManagedString = "leanclr::codegen::marshal_utf8_string_to_managed_string";
+        public const string MarshalManagedStringToUtf8String = "leanclr::codegen::marshal_managed_string_to_utf8_string";
+
+        public const string MarshalUtf16StringToManagedString = "leanclr::codegen::marshal_utf16_string_to_managed_string";
+        public const string MarshalManagedStringToUtf16String = "leanclr::codegen::marshal_managed_string_to_utf16_string";
+        public const string MarshalAnsiStringToManagedString = "leanclr::codegen::marshal_ansi_string_to_managed_string";
+        public const string MarshalManagedStringToAnsiString = "leanclr::codegen::marshal_managed_string_to_ansi_string";
+        public const string MarshalDelegateToFnPtr = "leanclr::codegen::marshal_delegate_to_fn_ptr";
+        public const string MarshalFnPtrToDelegate = "leanclr::codegen::marshal_fn_ptr_to_delegate";
+        public const string MarshalSafeHandleToHandle = "leanclr::codegen::marshal_safe_handle_to_handle";
+        public const string MarshalHandleToSafeHandle = "leanclr::codegen::marshal_handle_to_safe_handle";
+        public const string MarshalManagedArrayToNativeArray = "leanclr::codegen::marshal_managed_array_to_native_array";
+        public const string MarshalNativeArrayToManagedArray = "leanclr::codegen::marshal_native_array_to_managed_array";
+        public const string FreeNativeArray = "leanclr::codegen::free_native_array";
+        public const string MarshalManagedArrayToNativeValArray = "leanclr::codegen::marshal_managed_array_to_native_val_array";
+        public const string MarshalNativeValArrayToManagedArray = "leanclr::codegen::marshal_native_val_array_to_managed_array";
     }
 }

@@ -939,5 +939,22 @@ namespace LeanAOT.Core
             UTF8String moduleName = module.Assembly.Name;
             return module.IsCoreLibraryModule == true || moduleName == "mscorlib" || moduleName == "System" || moduleName == "System.Core";
         }
+
+        public static bool IsMonoPInvokeCallbackAttribute(CustomAttribute ca)
+        {
+            return ca.AttributeType.Name == "MonoPInvokeCallbackAttribute";
+        }
+
+        public static bool HasMonoPInvokeCallbackAttribute(MethodDef method)
+        {
+            foreach (CustomAttribute ca in method.CustomAttributes)
+            {
+                if (IsMonoPInvokeCallbackAttribute(ca))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 }

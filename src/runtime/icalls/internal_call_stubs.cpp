@@ -56,6 +56,7 @@
 #include "system_security_cryptography_rngcryptoserviceprovider.h"
 #include "system_security_securitymanager.h"
 #include "system_threading_internalthread.h"
+#include "system_threading_threadpool.h"
 #include "system_typedreference.h"
 #include "system_gc.h"
 #include "system_datetime.h"
@@ -63,6 +64,7 @@
 #include "system_mathf.h"
 #include "system_io_path.h"
 #include "system_io_monoio.h"
+#include "system_console_windowsconsole.h"
 #include "interop.h"
 
 namespace leanclr
@@ -97,6 +99,7 @@ void InternalCallStubs::get_internal_call_entries(utils::Vector<vm::InternalCall
     Append(entries, SystemEnvironment::get_internal_call_entries());
     Append(entries, SystemThreadingInterlocked::get_internal_call_entries());
     Append(entries, SystemThreadingThread::get_internal_call_entries());
+    Append(entries, SystemThreadingThreadPool::get_internal_call_entries());
     Append(entries, SystemThreadingInternalThread::get_internal_call_entries());
     Append(entries, SystemType::get_internal_call_entries());
     Append(entries, SystemValueType::get_internal_call_entries());
@@ -105,6 +108,7 @@ void InternalCallStubs::get_internal_call_entries(utils::Vector<vm::InternalCall
     Append(entries, SystemRuntimeInteropServicesGCHandle::get_internal_call_entries());
     Append(entries, SystemRuntimeInteropServicesRuntimeInformation::get_internal_call_entries());
     Append(entries, SystemRuntimeRuntimeImports::get_internal_call_entries());
+    Append(entries, SystemConsoleWindowsConsole::get_internal_call_entries());
     Append(entries, Interop::get_internal_call_entries());
     Append(entries, SystemEnum::get_internal_call_entries());
     Append(entries, SystemMonoCustomAttrs::get_internal_call_entries());

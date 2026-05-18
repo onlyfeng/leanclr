@@ -106,7 +106,7 @@ namespace LeanAOT.ToCpp
             {
                 if (__curMethodVar == null)
                 {
-                    __curMethodVar = _runtimeResolvedMetadatas.GetMethodVariable(_method.MethodDef);
+                    __curMethodVar = _runtimeResolvedMetadatas.GetMethodVariable(_method.MethodDef, _method);
                 }
                 return __curMethodVar;
             }
@@ -225,14 +225,35 @@ namespace LeanAOT.ToCpp
             WriteMethodHeader();
             WriteLocalDeclarations(InitLocals);
             WriteMethodBody();
-            WriteMethodEnd();
-
             WriteDeferredCode();
+            WriteMethodEnd();
             _writer.MarkAsArchived();
+        }
+
+
+        private string GetRetVariableName()
+        {
+            return "___ret";
+        }
+
+        private string GetRetErrorVariableName()
+        {
+            return "___ret_err";
+        }
+
+        private string GetHanleReturnValueLabelName()
+        {
+            return "___label_handle_return_value";
+        }
+
+        private string GetHandleReturnErrorLabelName()
+        {
+            return "___label_handle_return_error";
         }
 
         void WriteMethodHeader()
         {
+            _headWriter.AddLine();
             _headWriter.AddLine($"// Method: {_method.FullName}");
             _headWriter.AddLine(_method.GenerateMethodDeclaring());
             _headWriter.AddLine("{");
@@ -258,27 +279,44 @@ namespace LeanAOT.ToCpp
         {
             if (!_runtimeResolvedMetadatas.IsEmpty())
             {
+                var subVariables = _runtimeResolvedMetadatas.ResolvedVariables.SelectMany(v => v.GetSubVariables()).ToList();
+                subVariables.Sort((a, b) => a.VariableName.CompareTo(b.VariableName));
                 _beforeBodyWriter.SetIndent(0);
                 _beforeBodyWriter.AddLine($"struct {_runtimeResolvedMetadatas.GetResolveMetadataStructName()}");
-                _beforeBodyWriter.AddLine("{");
-                _beforeBodyWriter.IncreaseIndent();
+                _beforeBodyWriter.BeginBlock();
                 foreach (var resolvedVar in _runtimeResolvedMetadatas.ResolvedVariables)
                 {
                     _beforeBodyWriter.AddLine($"// Token: 0x{resolvedVar.token:X8}");
                     _beforeBodyWriter.AddLine($"{resolvedVar.GetVariableTypeName()} {resolvedVar.GetVariableName()};");
                 }
-                _beforeBodyWriter.DecreaseIndent();
-                _beforeBodyWriter.AddLine("};");
-                _beforeBodyWriter.AddLine($"static {_runtimeResolvedMetadatas.GetResolveMetadataStructName()} {_runtimeResolvedMetadatas.GetResolveMetadatasVariableName()};");
+                _beforeBodyWriter.EndBlockWithVariableDeclaration(_runtimeResolvedMetadatas.GetResolveMetadatasVariableName());
+                _beforeBodyWriter.AddLine();
                 _beforeBodyWriter.AddLine($"static bool {_runtimeResolvedMetadatas.GetResolveMetadatasInitedVariableName()};");
                 _beforeBodyWriter.AddLine($"constexpr uint32_t {_runtimeResolvedMetadatas.GetResolveMetadatasTokensVariableName()}[] = {{ {string.Join(", ", _runtimeResolvedMetadatas.ResolvedVariables.Select(v => $"0x{v.token:X8}"))} }};");
                 _beforeBodyWriter.AddLine($"static_assert(sizeof({_runtimeResolvedMetadatas.GetResolveMetadatasTokensVariableName()}) / sizeof(uint32_t) == {_runtimeResolvedMetadatas.ResolvedVariables.Count}, \"The size of the tokens array does not match the number of resolved variables\");");
                 _beforeBodyWriter.AddLine($"static_assert(sizeof({_runtimeResolvedMetadatas.GetResolveMetadatasVariableName()}) / sizeof(void*) == {_runtimeResolvedMetadatas.ResolvedVariables.Count}, \"The size of the resolved metadatas variable does not match the size of a pointer times the number of resolved variables\");");
 
+                if (subVariables.Count > 0)
+                {
+                    _beforeBodyWriter.AddLine();
+                    _beforeBodyWriter.AddLine($"struct {_runtimeResolvedMetadatas.getSubResolveMetadataStructName()}");
+                    _beforeBodyWriter.BeginBlock();
+                    foreach (var subVariable in subVariables)
+                    {
+                        _beforeBodyWriter.AddLine($"{subVariable.TypeName} {subVariable.VariableName};");
+                    }
+                    _beforeBodyWriter.EndBlockWithVariableDeclaration(_runtimeResolvedMetadatas.GetSubResolveMetadatasVariableName());
+                }
+
                 _headWriter.SetIndent(1);
                 _headWriter.AddLine($"if (!{_runtimeResolvedMetadatas.GetResolveMetadatasInitedVariableName()})");
                 _headWriter.BeginBlock();
                 _headWriter.AddLine($"{VmFunctionNames.ResolveMetadataTokens}({ModuleGenerationUtil.GetModuleGlobalVariableName(_method.Module)}, {_runtimeResolvedMetadatas.GetResolveMetadatasTokensVariableName()}, {_runtimeResolvedMetadatas.ResolvedVariables.Count}, (void**)&{_runtimeResolvedMetadatas.GetResolveMetadatasVariableName()});");
+
+                foreach (SubRuntimeResolvedVariable subVariable in subVariables)
+                {
+                    _headWriter.AddLine($"{subVariable.FullReferenceVariableName} = {subVariable.InitExpression};");
+                }
                 _headWriter.AddLine($"{_runtimeResolvedMetadatas.GetResolveMetadatasInitedVariableName()} = true;");
                 _headWriter.EndBlock();
             }
@@ -287,6 +325,37 @@ namespace LeanAOT.ToCpp
                 //Debug.Assert(!TypeEqualityComparer.Instance.Equals(klass, _method.DeclaringType));
                 _headWriter.AddLine($"bool {GetHasRunKlassStaticConstructorVariableName(klass, metadataVar)} = false;");
             }
+
+
+
+            if (!_method.IsVoidReturn)
+            {
+                _headWriter.AddLine($"{MethodGenerationUtil.GetAbiRelaxedTypeName(_method.RetType)} {GetRetVariableName()} = {{}};");
+            }
+            if (__curMethodVar != null)
+            {
+                _headWriter.AddLine($"{ConstStrings.RtErrTypeName} {GetRetErrorVariableName()} = {{}};");
+            }
+
+
+            _tailWriter.IncreaseIndent();
+            _tailWriter.AddLine($"{GetHanleReturnValueLabelName()}:");
+            if (!_method.IsVoidReturn)
+            {
+                _tailWriter.AddLine($"{VmFunctionNames.RET_VALUE}({GetRetVariableName()});");
+            }
+            else
+            {
+                _tailWriter.AddLine($"{VmFunctionNames.RET_VOID}();");
+            }
+
+            if (__curMethodVar != null)
+            {
+                _tailWriter.AddLine($"{GetHandleReturnErrorLabelName()}:");
+                _tailWriter.AddLine($"assert({GetRetErrorVariableName()} != {ConstStrings.RtErrTypeName}::None);");
+                _tailWriter.AddLine($"LEANCLR_CODEGEN_THROW_RUNTIME_ERROR({GetRetErrorVariableName()}, {CurMethodVar.GetFullReferenceVariableName()}, 0);");
+            }
+            _tailWriter.DecreaseIndent();
         }
 
         private bool InitLocals => _method.MethodDef.Body.InitLocals;
@@ -1119,7 +1188,7 @@ namespace LeanAOT.ToCpp
             }
             string retTypeName = isUnsigned ? GetUnsignedTypeName(retVar) : GetTypeName(retVar);
             _bodyWriter.AddLine($"{GetTypeName(retVar)} {GetEvalVariableName(retVar)};");
-            _bodyWriter.AddLine($"if ({functionName}({GetEvalVariableExpr(op1, isUnsigned)}, {GetEvalVariableExpr(op2, isUnsigned)}, ({retTypeName}*)&{GetEvalVariableName(retVar)}))");
+            _bodyWriter.AddLine($"if ({GetUnlikelyExpr($"{functionName}({GetEvalVariableExpr(op1, isUnsigned)}, {GetEvalVariableExpr(op2, isUnsigned)}, ({retTypeName}*)&{GetEvalVariableName(retVar)})")})");
             _bodyWriter.AddLine("{");
             _bodyWriter.IncreaseIndent();
             EmitThrowRuntimeError(inst, "Overflow");
@@ -1144,7 +1213,7 @@ namespace LeanAOT.ToCpp
             case EvalDataType.I:
             {
                 isInteger = true;
-                _bodyWriter.AddLine($"if ({op2Expr} == 0)");
+                _bodyWriter.AddLine($"if ({GetUnlikelyExpr($"{op2Expr} == 0")})");
                 _bodyWriter.AddLine("{");
                 _bodyWriter.IncreaseIndent();
                 EmitThrowRuntimeError(inst, "DivideByZero");
@@ -1152,7 +1221,7 @@ namespace LeanAOT.ToCpp
                 _bodyWriter.AddLine("}");
                 if (!isUnsigned)
                 {
-                    _bodyWriter.AddLine($"if ({op1Expr} == std::numeric_limits<{opType}>::min() && {op2Expr} == -1)");
+                    _bodyWriter.AddLine($"if ({GetUnlikelyExpr($"{op1Expr} == std::numeric_limits<{opType}>::min() && {op2Expr} == -1")})");
                     _bodyWriter.AddLine("{");
                     _bodyWriter.IncreaseIndent();
                     EmitThrowRuntimeError(inst, "Overflow");
@@ -1189,16 +1258,16 @@ namespace LeanAOT.ToCpp
                 // fix compiler warning C4312: "conversion from 'int' to 'void*' of greater size"
                 if (ret.type == EvalDataType.Int32 && GetEvalDataType(_method.RetType) == EvalDataType.Ref)
                 {
-                    _bodyWriter.AddLine($"{VmFunctionNames.RET_VALUE}(({ConstStrings.ObjectPtrTypeName})({ConstStrings.IntPtrTypeName}){GetEvalVariableName(ret)});");
+                    _bodyWriter.AddLine($"{VmFunctionNames.GOTO_RET_VALUE}(({ConstStrings.ObjectPtrTypeName})({ConstStrings.IntPtrTypeName}){GetEvalVariableName(ret)});");
                 }
                 else
                 {
-                    _bodyWriter.AddLine($"{VmFunctionNames.RET_VALUE}({GetVariableMayCast(ret, TypeNameService.GetCppTypeNameAsFieldOrArgOrLoc(_method.RetType, TypeNameRelaxLevel.AbiRelaxed))});");
+                    _bodyWriter.AddLine($"{VmFunctionNames.GOTO_RET_VALUE}({GetVariableMayCast(ret, TypeNameService.GetCppTypeNameAsFieldOrArgOrLoc(_method.RetType, TypeNameRelaxLevel.AbiRelaxed))});");
                 }
             }
             else
             {
-                _bodyWriter.AddLine($"{VmFunctionNames.RET_VOID}();");
+                _bodyWriter.AddLine($"{VmFunctionNames.GOTO_RET_VOID}();");
             }
             _curState.runStackDatas.Clear();
         }
@@ -1605,7 +1674,7 @@ namespace LeanAOT.ToCpp
         {
             if (srcIsUnsigned == dstIsUnsigned)
             {
-                _bodyWriter.AddLine($"if ({srcExpr} < std::numeric_limits<{dstTypeNameWithCast}>::min() || {srcExpr} > std::numeric_limits<{dstTypeNameWithCast}>::max())");
+                _bodyWriter.AddLine($"if ({GetUnlikelyExpr($"{srcExpr} < std::numeric_limits<{dstTypeNameWithCast}>::min() || {srcExpr} > std::numeric_limits<{dstTypeNameWithCast}>::max()")})");
             }
             else
             {
@@ -1613,18 +1682,18 @@ namespace LeanAOT.ToCpp
                 {
                     if (dstSizeLevel < srcSizeLevel)
                     {
-                        _bodyWriter.AddLine($"if ({srcExpr} < 0 || {srcExpr} > static_cast<{srcTypeNameWithCast}>(std::numeric_limits<{dstTypeNameWithCast}>::max()))");
+                        _bodyWriter.AddLine($"if ({GetUnlikelyExpr($"{srcExpr} < 0 || {srcExpr} > static_cast<{srcTypeNameWithCast}>(std::numeric_limits<{dstTypeNameWithCast}>::max())")})");
                     }
                     else
                     {
-                        _bodyWriter.AddLine($"if ({srcExpr} < 0)");
+                        _bodyWriter.AddLine($"if ({GetUnlikelyExpr($"{srcExpr} < 0")})");
                     }
                 }
                 else
                 {
                     if (dstSizeLevel <= srcSizeLevel)
                     {
-                        _bodyWriter.AddLine($"if ({srcExpr} > static_cast<{srcTypeNameWithCast}>(std::numeric_limits<{dstTypeNameWithCast}>::max()))");
+                        _bodyWriter.AddLine($"if ({GetUnlikelyExpr($"{srcExpr} > static_cast<{srcTypeNameWithCast}>(std::numeric_limits<{dstTypeNameWithCast}>::max())")})");
                     }
                     else
                     {
@@ -1670,7 +1739,7 @@ namespace LeanAOT.ToCpp
                 case EvalDataType.Float:
                 case EvalDataType.Double:
                 {
-                    _bodyWriter.AddLine($"if ({VmFunctionNames.IsNan}({srcExpr}) || {srcExpr} < static_cast<{GetTypeName(srcVar)}>(std::numeric_limits<{dstTypeNameWithCast}>::min()) || {srcExpr} > static_cast<{GetTypeName(srcVar)}>(std::numeric_limits<{dstTypeNameWithCast}>::max()))");
+                    _bodyWriter.AddLine($"if ({GetUnlikelyExpr($"{VmFunctionNames.IsNan}({srcExpr}) || {srcExpr} < static_cast<{GetTypeName(srcVar)}>(std::numeric_limits<{dstTypeNameWithCast}>::min()) || {srcExpr} > static_cast<{GetTypeName(srcVar)}>(std::numeric_limits<{dstTypeNameWithCast}>::max())")})");
                     break;
                 }
                 default:
@@ -1813,12 +1882,12 @@ namespace LeanAOT.ToCpp
             {
                 return;
             }
-            EmitRunClassStaticConstructor(inst, () => _runtimeResolvedMetadatas.GetMethodVariable(method), method.DeclaringType);
+            EmitRunClassStaticConstructor(inst, () => _runtimeResolvedMetadatas.GetMethodVariable(method, methodDetail), method.DeclaringType);
         }
 
         private void EmitRunClassStaticConstructor(Instruction inst, FieldDetail fieldDetail, IField field)
         {
-            EmitRunClassStaticConstructor(inst, () => _runtimeResolvedMetadatas.GetFieldVariable(field), field.DeclaringType);
+            EmitRunClassStaticConstructor(inst, () => _runtimeResolvedMetadatas.GetFieldVariable(field, fieldDetail), field.DeclaringType);
         }
 
 
@@ -1853,18 +1922,27 @@ namespace LeanAOT.ToCpp
             _bodyWriter.AddLine($"if (!{hasRunKlassStaticConstructorVarName})");
             _bodyWriter.BeginBlock();
             _bodyWriter.AddLine($"{hasRunKlassStaticConstructorVarName} = true;");
-            _bodyWriter.AddLine($"{VmFunctionNames.THROW_ON_ERROR}({VmFunctionNames.RunClassStaticConstructor}({klassVar}), {CurMethodVar.GetFullReferenceVariableName()}, {GetCurrentIpOffset(inst)});");
+            _bodyWriter.AddLine($"{VmFunctionNames.GOTO_THROW_ON_ERROR}({VmFunctionNames.RunClassStaticConstructor}({klassVar}), {CurMethodVar.GetFullReferenceVariableName()}, {GetCurrentIpOffset(inst)});");
             _bodyWriter.EndBlock();
         }
 
         private void EmitThrowRuntimeError(Instruction inst, string errName)
         {
-            _bodyWriter.AddLine($"{VmFunctionNames.THROW_RUNTIME_ERROR}(leanclr::RtErr::{errName}, {CurMethodVar.GetFullReferenceVariableName()}, {GetCurrentIpOffset(inst)});");
+            _bodyWriter.AddLine($"{VmFunctionNames.GOTO_THROW_RUNTIME_ERROR}(leanclr::RtErr::{errName}, {CurMethodVar.GetFullReferenceVariableName()}, {GetCurrentIpOffset(inst)});");
         }
 
         private void EmitCheckNotNull(Instruction inst, EvalVariable objVar)
         {
-            _bodyWriter.AddLine($"{VmFunctionNames.CHECK_NULL_REFERENCE}({GetEvalVariableName(objVar)}, {CurMethodVar.GetFullReferenceVariableName()}, {GetCurrentIpOffset(inst)});");
+            if (!_globalConfig.EmitNullChecks)
+            {
+                return;
+            }
+            _bodyWriter.AddLine($"{VmFunctionNames.GOTO_CHECK_NULL_REFERENCE}({GetEvalVariableName(objVar)}, {CurMethodVar.GetFullReferenceVariableName()}, {GetCurrentIpOffset(inst)});");
+        }
+
+        private string GetUnlikelyExpr(string expr)
+        {
+            return $"{VmFunctionNames.Unlikely}({expr})";
         }
 
         /// <summary>
@@ -1889,6 +1967,11 @@ namespace LeanAOT.ToCpp
             _bodyWriter.AddLine($"{VmFunctionNames.AssumeNotNull}({ptrExpr});");
         }
 
+        private void EmitAssumeCondition(string condition)
+        {
+            _bodyWriter.AddLine($"{VmFunctionNames.Assume}({condition});");
+        }
+
         /// <summary>
         /// Whether IL <c>box</c> on this value type can yield a null reference, or the type might be System.Nullable at runtime.
         /// </summary>
@@ -1910,17 +1993,17 @@ namespace LeanAOT.ToCpp
 
         private void EmitThrowOnError(Instruction inst, string sourceExpr)
         {
-            _bodyWriter.AddLine($"{VmFunctionNames.THROW_ON_ERROR}({sourceExpr}, {CurMethodVar.GetFullReferenceVariableName()}, {GetCurrentIpOffset(inst)});");
+            _bodyWriter.AddLine($"{VmFunctionNames.GOTO_THROW_ON_ERROR}({sourceExpr}, {CurMethodVar.GetFullReferenceVariableName()}, {GetCurrentIpOffset(inst)});");
         }
 
         private void EmitDeclaringAssignOrThrow(Instruction inst, EvalVariable targetVar, string sourceExpr)
         {
-            _bodyWriter.AddLine($"{VmFunctionNames.DECLARING_ASSIGN_OR_THROW}({GetTypeName(targetVar)}, {GetEvalVariableName(targetVar)}, {sourceExpr}, {CurMethodVar.GetFullReferenceVariableName()}, {GetCurrentIpOffset(inst)});");
+            _bodyWriter.AddLine($"{VmFunctionNames.GOTO_DECLARING_ASSIGN_OR_THROW}({GetTypeName(targetVar)}, {GetEvalVariableName(targetVar)}, {sourceExpr}, {CurMethodVar.GetFullReferenceVariableName()}, {GetCurrentIpOffset(inst)});");
         }
 
         private void EmitAssignOrThrow(Instruction inst, EvalVariable targetVar, string sourceExpr)
         {
-            _bodyWriter.AddLine($"{VmFunctionNames.ASSIGN_OR_THROW}({GetEvalVariableName(targetVar)}, {sourceExpr}, {CurMethodVar.GetFullReferenceVariableName()}, {GetCurrentIpOffset(inst)});");
+            _bodyWriter.AddLine($"{VmFunctionNames.GOTO_ASSIGN_OR_THROW}({GetEvalVariableName(targetVar)}, {sourceExpr}, {CurMethodVar.GetFullReferenceVariableName()}, {GetCurrentIpOffset(inst)});");
         }
 
 
@@ -2044,7 +2127,7 @@ namespace LeanAOT.ToCpp
                 _bodyWriter.AddLine($"{GetTypeName(retVar)} {GetEvalVariableName(retVar)};");
             }
 
-            EmitCallCommon(inst, methodDetail, () => _runtimeResolvedMetadatas.GetMethodVariable(method).GetFullReferenceVariableName(), args, retVar);
+            EmitCallCommon(inst, methodDetail, () => _runtimeResolvedMetadatas.GetMethodVariable(method, methodDetail).GetFullReferenceVariableName(), args, retVar);
         }
 
         private bool IsParentOrInterfaceOfValueType(TypeDef declaringTypeDef)
@@ -2188,7 +2271,8 @@ namespace LeanAOT.ToCpp
                     {
                         // box the original this pointer to the constrained type
                         var actualThisVar = PushStack(_corlibTypes.Object);
-                        RuntimeResolvedVariable constrainedTypeVar = _runtimeResolvedMetadatas.GetTypeVariable(constaintedType);
+                        TypeDetail typeDetail = _metadataService.GetTypeDetail(constaintedType);
+                        RuntimeResolvedVariable constrainedTypeVar = _runtimeResolvedMetadatas.GetTypeVariable(constaintedType, typeDetail);
                         EmitDeclaringAssignOrThrow(inst, actualThisVar, $"{VmFunctionNames.Box}({constrainedTypeVar.GetFullReferenceVariableName()}, {GetEvalVariableExprWithCast(originalThisVar, "void*")})");
                         if (!MayBoxToNullReference(constaintedType.ToTypeSig()))
                         {
@@ -2220,7 +2304,7 @@ namespace LeanAOT.ToCpp
             EvalVariable thisVar = args[0];
             EmitCheckNotNull(inst, thisVar);
 
-            var methodVar = _runtimeResolvedMetadatas.GetMethodVariable(method);
+            var methodVar = _runtimeResolvedMetadatas.GetMethodVariable(method, methodDetail);
 
             EvalVariable retVar = null;
             if (hasReturnValue)
@@ -2234,7 +2318,7 @@ namespace LeanAOT.ToCpp
             }
 
             var finalMethodVar = CreateTempVariable(ConstStrings.MethodInfoPtrTypeName);
-            _bodyWriter.AddLine($"{VmFunctionNames.DECLARING_ASSIGN_OR_THROW}({finalMethodVar.TypeName}, {finalMethodVar.Name}, {VmFunctionNames.GetVirtualMethodOnObj}({GetEvalVariableName(thisVar)}, {methodVar.GetFullReferenceVariableName()}), {CurMethodVar.GetFullReferenceVariableName()}, {GetCurrentIpOffset(inst)});");
+            _bodyWriter.AddLine($"{VmFunctionNames.GOTO_DECLARING_ASSIGN_OR_THROW}({finalMethodVar.TypeName}, {finalMethodVar.Name}, {VmFunctionNames.GetVirtualMethodOnObj}({GetEvalVariableName(thisVar)}, {methodVar.GetFullReferenceVariableName()}), {CurMethodVar.GetFullReferenceVariableName()}, {GetCurrentIpOffset(inst)});");
             EmitAssumeNotNull(finalMethodVar.Name);
             EmitCallByMethodPointerDirectly(inst, methodDetail, finalMethodVar.Name, args, retVar, true);
         }
@@ -2284,7 +2368,8 @@ namespace LeanAOT.ToCpp
         private void EmitLdftn(Instruction inst, IMethod method)
         {
             _forwardDeclaration.AddMethodForwardDeclaration(method);
-            var methodVar = _runtimeResolvedMetadatas.GetMethodVariable(method);
+            MethodDetail methodDetail = _metadataService.GetMethodDetail(method);
+            var methodVar = _runtimeResolvedMetadatas.GetMethodVariable(method, methodDetail);
             var retVar = PushStack(_corlibTypes.IntPtr);
             _bodyWriter.AddLine($"{ConstStrings.MethodInfoPtrTypeName} {GetEvalVariableName(retVar)} = {methodVar.GetFullReferenceVariableName()};");
             EmitAssumeNotNull(retVar);
@@ -2294,10 +2379,11 @@ namespace LeanAOT.ToCpp
         {
             _forwardDeclaration.AddMethodForwardDeclaration(method);
             var thisVar = Pop();
-            var methodVar = _runtimeResolvedMetadatas.GetMethodVariable(method);
+            MethodDetail methodDetail = _metadataService.GetMethodDetail(method);
+            var methodVar = _runtimeResolvedMetadatas.GetMethodVariable(method, methodDetail);
             var retVar = PushStack(_corlibTypes.IntPtr);
             //var finalMethodVar = CreateTempVariable(ConstStrings.MethodInfoPtrTypeName);
-            _bodyWriter.AddLine($"{VmFunctionNames.DECLARING_ASSIGN_OR_THROW}({ConstStrings.MethodInfoPtrTypeName}, {GetEvalVariableName(retVar)}, {VmFunctionNames.GetVirtualMethodOnObj}({GetEvalVariableName(thisVar)}, {methodVar.GetFullReferenceVariableName()}), {CurMethodVar.GetFullReferenceVariableName()}, {GetCurrentIpOffset(inst)});");
+            _bodyWriter.AddLine($"{VmFunctionNames.GOTO_DECLARING_ASSIGN_OR_THROW}({ConstStrings.MethodInfoPtrTypeName}, {GetEvalVariableName(retVar)}, {VmFunctionNames.GetVirtualMethodOnObj}({GetEvalVariableName(thisVar)}, {methodVar.GetFullReferenceVariableName()}), {CurMethodVar.GetFullReferenceVariableName()}, {GetCurrentIpOffset(inst)});");
             EmitAssumeNotNull(retVar);
         }
 
@@ -2318,7 +2404,7 @@ namespace LeanAOT.ToCpp
 
             TypeDetail declaringTypeDetail = _metadataService.GetTypeDetail(methodDetail.DeclaringType);
             EvalVariable retVar = PushStack(declaringTypeDetail.Type);
-            var methodVarNameProvider = () => _runtimeResolvedMetadatas.GetMethodVariable(method).GetFullReferenceVariableName();
+            var methodVarNameProvider = () => _runtimeResolvedMetadatas.GetMethodVariable(method, methodDetail).GetFullReferenceVariableName();
 
             if (TryEmitNewobjIntrinsic(inst, methodDetail, methodVarNameProvider, args, retVar))
             {
@@ -2350,8 +2436,9 @@ namespace LeanAOT.ToCpp
             var srcObj = Pop();
             var dstObj = PushStack(_corlibTypes.Object);
             string srcVarName = GetEvalVariableName(srcObj);
-            RuntimeResolvedVariable targetTypeVar = _runtimeResolvedMetadatas.GetTypeVariable(targetType);
-            _bodyWriter.AddLine($"if ({srcVarName} != nullptr && {VmFunctionNames.CastClass}({srcVarName}, {targetTypeVar.GetFullReferenceVariableName()}) == nullptr)");
+            TypeDetail typeDetail = _metadataService.GetTypeDetail(targetType);
+            RuntimeResolvedVariable targetTypeVar = _runtimeResolvedMetadatas.GetTypeVariable(targetType, typeDetail);
+            _bodyWriter.AddLine($"if ({GetUnlikelyExpr($"{srcVarName} != nullptr && {VmFunctionNames.CastClass}({srcVarName}, {targetTypeVar.GetFullReferenceVariableName()}) == nullptr")})");
             _bodyWriter.AddLine("{");
             _bodyWriter.IncreaseIndent();
             EmitThrowRuntimeError(inst, "InvalidCast");
@@ -2365,7 +2452,8 @@ namespace LeanAOT.ToCpp
             var srcObj = Pop();
             var dstObj = PushStack(_corlibTypes.Object);
             string srcVarName = GetEvalVariableName(srcObj);
-            RuntimeResolvedVariable targetTypeVar = _runtimeResolvedMetadatas.GetTypeVariable(targetType);
+            TypeDetail typeDetail = _metadataService.GetTypeDetail(targetType);
+            RuntimeResolvedVariable targetTypeVar = _runtimeResolvedMetadatas.GetTypeVariable(targetType, typeDetail);
             _bodyWriter.AddLine($"{GetTypeName(dstObj)} {GetEvalVariableName(dstObj)} = {srcVarName} ? {VmFunctionNames.IsInst}(({ConstStrings.ObjectPtrTypeName}){srcVarName}, {targetTypeVar.GetFullReferenceVariableName()}) : nullptr;");
         }
 
@@ -2377,7 +2465,8 @@ namespace LeanAOT.ToCpp
             }
             var srcObj = Pop();
             var dstObj = PushStack(_corlibTypes.IntPtr);
-            RuntimeResolvedVariable targetTypeVar = _runtimeResolvedMetadatas.GetTypeVariable(targetType);
+            TypeDetail typeDetail = _metadataService.GetTypeDetail(targetType);
+            RuntimeResolvedVariable targetTypeVar = _runtimeResolvedMetadatas.GetTypeVariable(targetType, typeDetail);
             EmitDeclaringAssignOrThrow(inst, dstObj, $"{VmFunctionNames.Unbox}({GetEvalVariableName(srcObj)}, {targetTypeVar.GetFullReferenceVariableName()})");
             EmitAssumeNotNull(dstObj);
         }
@@ -2391,7 +2480,8 @@ namespace LeanAOT.ToCpp
             }
             var srcObj = Pop();
             var dstObj = PushStack(targetType);
-            RuntimeResolvedVariable targetTypeVar = _runtimeResolvedMetadatas.GetTypeVariable(targetType);
+            TypeDetail typeDetail = _metadataService.GetTypeDetail(targetType);
+            RuntimeResolvedVariable targetTypeVar = _runtimeResolvedMetadatas.GetTypeVariable(targetType, typeDetail);
             _bodyWriter.AddLine($"{GetTypeName(dstObj)} {GetEvalVariableName(dstObj)};");
             EmitThrowOnError(inst, $"{VmFunctionNames.UnboxAny}({GetEvalVariableName(srcObj)}, {targetTypeVar.GetFullReferenceVariableName()}, &{GetEvalVariableName(dstObj)}, true)");
         }
@@ -2408,7 +2498,8 @@ namespace LeanAOT.ToCpp
             }
             var srcObj = Pop();
             var dstObj = PushStack(_corlibTypes.Object);
-            RuntimeResolvedVariable targetTypeVar = _runtimeResolvedMetadatas.GetTypeVariable(targetType);
+            TypeDetail typeDetail = _metadataService.GetTypeDetail(targetType);
+            RuntimeResolvedVariable targetTypeVar = _runtimeResolvedMetadatas.GetTypeVariable(targetType, typeDetail);
             EmitDeclaringAssignOrThrow(inst, dstObj, $"{VmFunctionNames.Box}({targetTypeVar.GetFullReferenceVariableName()}, &{GetEvalVariableName(srcObj)})");
             if (!MayBoxToNullReference(targetType.ToTypeSig()))
             {
@@ -2563,12 +2654,12 @@ namespace LeanAOT.ToCpp
             {
                 throw new NotSupportedException($"Static field with RVA is not supported. Field: {field.FullName} in method: {_method.FullName}.");
             }
-            RuntimeResolvedVariable fieldVar = _runtimeResolvedMetadatas.GetFieldVariable(field);
-            string klassVarName = GetParentFromFullReferenceFieldVariable(fieldVar.GetFullReferenceVariableName());
+            RuntimeResolvedVariable fieldVar = _runtimeResolvedMetadatas.GetFieldVariable(field, fd);
             EmitRunClassStaticConstructor(inst, fd, field);
             string retTypeName = GetTypeName(retVar);
             string exactFieldTypeName = GetExactTypeName(fd.Type);
-            string loadFieldExpr = $"(({fd.Parent.StaticTypeName}*)({klassVarName}->{ConstStrings.KlassFieldNameStaticFieldsData}))->{fd.Name}";
+            SubRuntimeResolvedVariable staticDataSubVariable = fieldVar.GetFieldStaticDataSubVariable();
+            string loadFieldExpr = $"{staticDataSubVariable.FullReferenceVariableName}->{fd.Name}";
             _bodyWriter.AddLine($"{retTypeName} {GetEvalVariableName(retVar)} = {MayFoldCast(exactFieldTypeName, retTypeName, loadFieldExpr)};");
         }
 
@@ -2581,11 +2672,11 @@ namespace LeanAOT.ToCpp
             {
                 throw new NotSupportedException($"Static field with const or RVA is not supported. Field: {field.FullName} in method: {_method.FullName}.");
             }
-            RuntimeResolvedVariable fieldVar = _runtimeResolvedMetadatas.GetFieldVariable(field);
-            string klassVarName = GetParentFromFullReferenceFieldVariable(fieldVar.GetFullReferenceVariableName());
+            RuntimeResolvedVariable fieldVar = _runtimeResolvedMetadatas.GetFieldVariable(field, fd);
             EmitRunClassStaticConstructor(inst, fd, field);
             string exactFieldTypeName = GetExactTypeName(fd.Type);
-            _bodyWriter.AddLine($"(({fd.Parent.StaticTypeName}*)({klassVarName}->{ConstStrings.KlassFieldNameStaticFieldsData}))->{fd.Name} = {GetEvalVariableExprWithCast(valueVar, exactFieldTypeName)};");
+            SubRuntimeResolvedVariable staticDataSubVariable = fieldVar.GetFieldStaticDataSubVariable();
+            _bodyWriter.AddLine($"{staticDataSubVariable.FullReferenceVariableName}->{fd.Name} = {GetEvalVariableExprWithCast(valueVar, exactFieldTypeName)};");
         }
 
         private void EmitLdflda(Instruction inst, IField field, uint token)
@@ -2623,7 +2714,7 @@ namespace LeanAOT.ToCpp
             var retVar = PushStack(EvalDataType.I);
 
             FieldDetail fd = _metadataService.GetFieldDetail(field);
-            RuntimeResolvedVariable fieldVar = _runtimeResolvedMetadatas.GetFieldVariable(field);
+            RuntimeResolvedVariable fieldVar = _runtimeResolvedMetadatas.GetFieldVariable(field, fd);
             string retTypeName = GetTypeName(retVar);
             FieldDef fieldDef = fd.FieldBase;
             if (fieldDef.HasConstant)
@@ -2637,9 +2728,9 @@ namespace LeanAOT.ToCpp
             }
             else
             {
-                string klassVarName = GetParentFromFullReferenceFieldVariable(fieldVar.GetFullReferenceVariableName());
                 EmitRunClassStaticConstructor(inst, fd, field);
-                string loadFieldExpr = $"&(({fd.Parent.StaticTypeName}*)({klassVarName}->{ConstStrings.KlassFieldNameStaticFieldsData}))->{fd.Name}";
+                SubRuntimeResolvedVariable staticDataSubVariable = fieldVar.GetFieldStaticDataSubVariable();
+                string loadFieldExpr = $"&{staticDataSubVariable.FullReferenceVariableName}->{fd.Name}";
                 _bodyWriter.AddLine($"{retTypeName} {GetEvalVariableName(retVar)} = ({retTypeName})({loadFieldExpr});");
                 EmitAssumeNotNull(retVar);
             }
@@ -2647,23 +2738,34 @@ namespace LeanAOT.ToCpp
 
         private void EmitCheckArrayIndexOutOfRange(Instruction inst, EvalVariable objVar, EvalVariable indexVar)
         {
+            if (!_globalConfig.EnableArrayBoundsCheck)
+            {
+                return;
+            }
             string arrVarExpr = GetVariableMayCast(objVar, ConstStrings.ArrayPtrTypeName);
             string indexVarExpr = GetVariableMayCast(indexVar, "int32_t");
-            _bodyWriter.AddLine($"if ({VmFunctionNames.IsArrayIndexOutOfRange}({arrVarExpr}, {indexVarExpr}))");
+            EmitAssumeCondition($"({arrVarExpr})->length >= 0");
+            _bodyWriter.AddLine($"if ({GetUnlikelyExpr($"(uint32_t)({indexVarExpr}) >= (uint32_t)({arrVarExpr})->length")})");
             _bodyWriter.AddLine("{");
             _bodyWriter.IncreaseIndent();
             EmitThrowRuntimeError(inst, "IndexOutOfRange");
             _bodyWriter.DecreaseIndent();
             _bodyWriter.AddLine("}");
+            EmitAssumeCondition($"({indexVarExpr}) >= 0");
         }
 
         private void EmitNewarr(Instruction inst, ITypeDefOrRef operand)
         {
             var indexVar = Pop();
             var retVar = PushStack(new SZArraySig(operand.ToTypeSig()));
-            RuntimeResolvedVariable elementKlassVar = _runtimeResolvedMetadatas.GetTypeVariable(operand);
-            string indexVarExpr = GetVariableMayCast(indexVar, "int32_t");
-            EmitDeclaringAssignOrThrow(inst, retVar, $"{VmFunctionNames.NewSZArrayFromEleKlass}({elementKlassVar.GetFullReferenceVariableName()}, {indexVarExpr})");
+            TypeDetail typeDetail = _metadataService.GetTypeDetail(operand);
+            RuntimeResolvedVariable elementKlassVar = _runtimeResolvedMetadatas.GetTypeVariable(operand, typeDetail);
+            string sizeVarExpr = GetVariableMayCast(indexVar, "int32_t");
+            EmitDeclaringAssignOrThrow(inst, retVar, $"{VmFunctionNames.NewSZArrayFromEleKlass}({elementKlassVar.GetFullReferenceVariableName()}, {sizeVarExpr})");
+            EmitAssumeCondition($"({sizeVarExpr}) >= 0");
+            string arrVarExpr = GetVariableMayCast(retVar, ConstStrings.ArrayPtrTypeName);
+            EmitAssumeCondition($"({sizeVarExpr}) == ({arrVarExpr})->length");
+            EmitAssumeCondition($"({arrVarExpr})->length >= 0");
             EmitAssumeNotNull(retVar);
         }
 
@@ -2672,7 +2774,9 @@ namespace LeanAOT.ToCpp
             var arrayVar = Pop();
             var retVar = PushStack(EvalDataType.Int32);
             EmitCheckNotNull(inst, arrayVar);
-            _bodyWriter.AddLine($"{GetTypeName(retVar)} {GetEvalVariableName(retVar)} = {VmFunctionNames.GetArrayLength}({GetVariableMayCast(arrayVar, ConstStrings.ArrayPtrTypeName)});");
+            string arrayVarExpr = GetVariableMayCast(arrayVar, ConstStrings.ArrayPtrTypeName);
+            EmitAssumeCondition($"({arrayVarExpr})->length >= 0");
+            _bodyWriter.AddLine($"{GetTypeName(retVar)} {GetEvalVariableName(retVar)} = ({arrayVarExpr})->length;");
         }
 
         private void EmitLdelema(Instruction inst, ITypeDefOrRef elementType, uint token)
@@ -2692,8 +2796,9 @@ namespace LeanAOT.ToCpp
             {
                 if (evalDataType == EvalDataType.Ref)
                 {
-                    RuntimeResolvedVariable elementKlassVar = _runtimeResolvedMetadatas.GetTypeVariable(elementType);
-                    _bodyWriter.AddLine($"if (!{VmFunctionNames.IsPointerElementCompatibleWith}({VmFunctionNames.GetArrayElementKlass}({GetEvalVariableExprWithCast(arrayVar, ConstStrings.ArrayPtrTypeName)}), {elementKlassVar.GetFullReferenceVariableName()}))");
+                    TypeDetail typeDetail = _metadataService.GetTypeDetail(elementType);
+                    RuntimeResolvedVariable elementKlassVar = _runtimeResolvedMetadatas.GetTypeVariable(elementType, typeDetail);
+                    _bodyWriter.AddLine($"if ({GetUnlikelyExpr($"!{VmFunctionNames.IsPointerElementCompatibleWith}({VmFunctionNames.GetArrayElementKlass}({GetEvalVariableExprWithCast(arrayVar, ConstStrings.ArrayPtrTypeName)}), {elementKlassVar.GetFullReferenceVariableName()})")})");
                     _bodyWriter.AddLine("{");
                     _bodyWriter.IncreaseIndent();
                     EmitThrowRuntimeError(inst, "ArrayTypeMismatch");
@@ -2760,7 +2865,7 @@ namespace LeanAOT.ToCpp
             EmitCheckArrayIndexOutOfRange(inst, arrayVar, indexVar);
 
             string valueVarName = GetEvalVariableName(valueVar);
-            _bodyWriter.AddLine($"if ({valueVarName} != nullptr && !{VmFunctionNames.IsAssignableFrom}({valueVarName}->klass, {VmFunctionNames.GetArrayElementKlass}({GetEvalVariableExprWithCast(arrayVar, ConstStrings.ArrayPtrTypeName)})))");
+            _bodyWriter.AddLine($"if ({GetUnlikelyExpr($"{valueVarName} != nullptr && !{VmFunctionNames.IsAssignableFrom}({valueVarName}->klass, {VmFunctionNames.GetArrayElementKlass}({GetEvalVariableExprWithCast(arrayVar, ConstStrings.ArrayPtrTypeName)}))")})");
             _bodyWriter.AddLine("{");
             _bodyWriter.IncreaseIndent();
             EmitThrowRuntimeError(inst, "ArrayTypeMismatch");
@@ -2809,8 +2914,7 @@ namespace LeanAOT.ToCpp
             if (evalDataType == EvalDataType.Ref)
             {
                 string valueVarName = GetEvalVariableName(valueVar);
-                RuntimeResolvedVariable elementKlassVar = _runtimeResolvedMetadatas.GetTypeVariable(elementType);
-                _bodyWriter.AddLine($"if ({valueVarName} != nullptr && !{VmFunctionNames.IsAssignableFrom}({valueVarName}->klass, {VmFunctionNames.GetArrayElementKlass}({GetEvalVariableExprWithCast(arrayVar, ConstStrings.ArrayPtrTypeName)})))");
+                _bodyWriter.AddLine($"if ({GetUnlikelyExpr($"{valueVarName} != nullptr && !{VmFunctionNames.IsAssignableFrom}({valueVarName}->klass, {VmFunctionNames.GetArrayElementKlass}({GetEvalVariableExprWithCast(arrayVar, ConstStrings.ArrayPtrTypeName)}))")})");
                 _bodyWriter.AddLine("{");
                 _bodyWriter.IncreaseIndent();
                 EmitThrowRuntimeError(inst, "ArrayTypeMismatch");
@@ -2836,7 +2940,7 @@ namespace LeanAOT.ToCpp
             {
                 throw new Exception($"ckfinite can only be applied to float or double. Method: {_method.FullName}, Value Type: {valueVar.type}.");
             }
-            _bodyWriter.AddLine($"if (!{VmFunctionNames.IsFinite}({GetEvalVariableName(valueVar)}))");
+            _bodyWriter.AddLine($"if ({GetUnlikelyExpr($"!{VmFunctionNames.IsFinite}({GetEvalVariableName(valueVar)})")})");
             _bodyWriter.AddLine("{");
             _bodyWriter.IncreaseIndent();
             EmitThrowRuntimeError(inst, "Arithmetic");
@@ -2868,17 +2972,17 @@ namespace LeanAOT.ToCpp
             var retVar = PushStack(_corlibTypes.IntPtr);
             if (operand is ITypeDefOrRef type)
             {
-                RuntimeResolvedVariable typeVar = _runtimeResolvedMetadatas.GetTypeVariable(type);
+                RuntimeResolvedVariable typeVar = _runtimeResolvedMetadatas.GetTypeVariable(type, null);
                 _bodyWriter.AddLine($"{ConstStrings.TypeSigPtrTypeName} {GetEvalVariableName(retVar)} = {typeVar.GetFullReferenceVariableName()}->by_val;");
             }
             else if (operand is IMethod method && method.IsMethod)
             {
-                RuntimeResolvedVariable methodVar = _runtimeResolvedMetadatas.GetMethodVariable(method);
+                RuntimeResolvedVariable methodVar = _runtimeResolvedMetadatas.GetMethodVariable(method, null);
                 _bodyWriter.AddLine($"{ConstStrings.MethodInfoPtrTypeName} {GetEvalVariableName(retVar)} = {methodVar.GetFullReferenceVariableName()};");
             }
             else if (operand is IField field && field.IsField)
             {
-                RuntimeResolvedVariable fieldVar = _runtimeResolvedMetadatas.GetFieldVariable(field);
+                RuntimeResolvedVariable fieldVar = _runtimeResolvedMetadatas.GetFieldVariable(field, null);
                 _bodyWriter.AddLine($"{ConstStrings.FieldInfoPtrTypeName} {GetEvalVariableName(retVar)} = {fieldVar.GetFullReferenceVariableName()};");
             }
             else
@@ -2923,14 +3027,15 @@ namespace LeanAOT.ToCpp
             EvalVariable typedRefVar = Pop();
             var retVar = PushStack(EvalDataType.I);
             string typeRefVarName = GetEvalVariableName(typedRefVar);
-            RuntimeResolvedVariable typeVar = _runtimeResolvedMetadatas.GetTypeVariable(inflatedType);
+            TypeDetail typeDetail = _metadataService.GetTypeDetail(inflatedType);
+            RuntimeResolvedVariable typeVar = _runtimeResolvedMetadatas.GetTypeVariable(inflatedType, typeDetail);
             if (MetaUtil.IsValueType(inflatedType.ToTypeSig()))
             {
-                _bodyWriter.AddLine($"if ({typeRefVarName}.klass != {typeVar.GetFullReferenceVariableName()})");
+                _bodyWriter.AddLine($"if ({GetUnlikelyExpr($"{typeRefVarName}.klass != {typeVar.GetFullReferenceVariableName()}")})");
             }
             else
             {
-                _bodyWriter.AddLine($"if ( !{VmFunctionNames.IsAssignableFrom}({typeRefVarName}.klass, {typeVar.GetFullReferenceVariableName()}))");
+                _bodyWriter.AddLine($"if ({GetUnlikelyExpr($"!{VmFunctionNames.IsAssignableFrom}({typeRefVarName}.klass, {typeVar.GetFullReferenceVariableName()})")})");
             }
             _bodyWriter.AddLine("{");
             _bodyWriter.IncreaseIndent();
@@ -2953,7 +3058,8 @@ namespace LeanAOT.ToCpp
         {
             EvalVariable addrVar = Pop();
             var retVar = PushStack(_corlibTypes.TypedReference);
-            RuntimeResolvedVariable typeVar = _runtimeResolvedMetadatas.GetTypeVariable(inflatedType);
+            TypeDetail typeDetail = _metadataService.GetTypeDetail(inflatedType);
+            RuntimeResolvedVariable typeVar = _runtimeResolvedMetadatas.GetTypeVariable(inflatedType, typeDetail);
             string retVarName = GetEvalVariableName(retVar);
             _bodyWriter.AddLine($"{ConstStrings.TypedByRefTypeName} {retVarName};");
             _bodyWriter.AddLine($"{retVarName}.type_handle = {typeVar.GetFullReferenceVariableName()}->by_val;");
